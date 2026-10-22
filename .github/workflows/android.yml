@@ -37,8 +37,8 @@ jobs:
             "platforms;android-37.0" \
             "build-tools;37.0.0"
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Build debug and release APKs
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon
 
       - name: Run Android lint
         run: ./gradlew :app:lintDebug --no-daemon
