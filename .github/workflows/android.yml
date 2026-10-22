@@ -34,7 +34,7 @@ jobs:
         run: |
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-37" \
+            "platforms;android-37.0" \
             "build-tools;37.0.0"
 
       - name: Build debug APK
