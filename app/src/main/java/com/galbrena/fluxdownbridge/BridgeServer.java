@@ -1,6 +1,8 @@
 package com.galbrena.fluxdownbridge;
 
 import android.content.Context;
+import android.os.SystemClock;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,17 +25,31 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 final class BridgeServer {
+    private static final String TAG = "FluxDownBridge";
     private static final String APP_VERSION = BuildConfig.VERSION_NAME;
     static final int PORT = 17800;
+    private static final int CLIENT_THREADS = 12;
+    private static final int SOCKET_READ_TIMEOUT_MS = 3_000;
     private static final int MAX_HEADER = 32 * 1024;
     private static final int MAX_BODY = 2 * 1024 * 1024;
 
     private final Context context;
     private final String token;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final ExecutorService clients = Executors.newFixedThreadPool(4);
+    private final AtomicInteger nextClientThread = new AtomicInteger();
+    private final AtomicInteger activeClients = new AtomicInteger();
+    private final ExecutorService clients = Executors.newFixedThreadPool(
+            CLIENT_THREADS,
+            runnable -> {
+                Thread thread = new Thread(
+                        runnable,
+                        "fluxdown-client-" + nextClientThread.incrementAndGet());
+                thread.setDaemon(true);
+                return thread;
+            });
     private ServerSocket serverSocket;
     private Thread acceptThread;
 
@@ -71,12 +87,21 @@ final class BridgeServer {
     }
 
     private void handle(Socket socket) {
+        long startedAt = SystemClock.elapsedRealtime();
+        String method = "unknown";
+        String path = "unknown";
+        int status = 400;
+        boolean requestParsed = false;
+        int active = activeClients.incrementAndGet();
         try (Socket s = socket) {
-            s.setSoTimeout(10_000);
+            s.setSoTimeout(SOCKET_READ_TIMEOUT_MS);
+            s.setTcpNoDelay(true);
             HttpRequest request = readRequest(s.getInputStream());
-            if (request == null) return;
+            if (request == null) throw new IOException("invalid HTTP request");
             HttpResponse response;
-            String path = request.path;
+            method = request.method;
+            path = request.path;
+            requestParsed = true;
             if ("OPTIONS".equals(request.method)) {
                 response = new HttpResponse(204, "{}");
             } else if ("GET".equals(request.method) && "/ping".equals(path)) {
@@ -97,11 +122,26 @@ final class BridgeServer {
             } else {
                 response = new HttpResponse(404, error("not found"));
             }
+            status = response.status;
             writeResponse(s.getOutputStream(), response, request.origin);
         } catch (Exception e) {
+            if (requestParsed) {
+                Log.w(TAG, "request failed class=" + e.getClass().getSimpleName()
+                        + " message=" + String.valueOf(e.getMessage()));
+            }
             try {
                 writeResponse(socket.getOutputStream(), new HttpResponse(400, error(e.getMessage())), null);
             } catch (IOException ignored) {}
+        } finally {
+            activeClients.decrementAndGet();
+            long durationMs = SystemClock.elapsedRealtime() - startedAt;
+            if (requestParsed || durationMs >= SOCKET_READ_TIMEOUT_MS - 100) {
+                Log.i(TAG, "request method=" + safeLogValue(method)
+                        + " path=" + safeLogValue(path)
+                        + " status=" + status
+                        + " durationMs=" + durationMs
+                        + " activeClients=" + active);
+            }
         }
     }
 
@@ -173,6 +213,15 @@ final class BridgeServer {
         } catch (Exception impossible) {
             throw new RuntimeException(impossible);
         }
+    }
+
+    private static String safeLogValue(String value) {
+        if (value == null) return "unknown";
+        String cleaned = value
+                .replace('\r', '_')
+                .replace('\n', '_')
+                .replace('\t', '_');
+        return cleaned.length() <= 80 ? cleaned : cleaned.substring(0, 80);
     }
 
     private boolean authorized(HttpRequest request) {

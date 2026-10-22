@@ -163,6 +163,10 @@ Please report vulnerabilities according to [SECURITY.md](SECURITY.md).
 
 ## Compatibility and limitations
 
+- The bridge itself supports Android 8.0 through Android 17 (API 26 through
+  API 37). Versions newer than API 37 are not yet validated.
+- The browser host has its own minimum. The Helium 155 build used during
+  development requires Android 10 / API 29 or newer.
 - The bridge depends on FluxDown's current package name and
   `ExternalDownloadActivity` component.
 - Separate `audioUrl` tracks are rejected because the `fluxdown://` handoff URI
@@ -197,6 +201,12 @@ Please report vulnerabilities according to [SECURITY.md](SECURITY.md).
 
 Enable unrestricted battery use, keep the foreground notification visible, and
 check whether the ROM has a separate background-start or autostart permission.
+
+For request-level diagnostics that contain no URLs, cookies, tokens, or bodies:
+
+```bash
+adb logcat -s FluxDownBridge
+```
 
 ## Contributing
 

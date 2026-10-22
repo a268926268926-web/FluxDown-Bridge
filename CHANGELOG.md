@@ -2,6 +2,22 @@
 
 All notable changes are documented here.
 
+## [1.5.1] - 2026-10-23
+
+### Fixed
+
+- Prevented idle Chromium preconnections from exhausting the four old request
+  workers and causing occasional `/ping` and download timeouts.
+- Increased the bounded request worker pool to 12 and reduced idle socket reads
+  to 3 seconds.
+- Added request timing, status, and active-client logs without recording URLs,
+  cookies, tokens, or request bodies.
+
+### Compatibility
+
+- Documented Android 8.0 through Android 17 / API 26 through API 37 as the
+  current configured range.
+
 ## [1.5.0] - 2026-10-22
 
 ### Added

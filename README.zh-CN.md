@@ -145,6 +145,10 @@ Android 设备上的浏览器和 FluxDown。
 
 ## 兼容范围与限制
 
+- Bridge 本身支持 Android 8.0 至 Android 17（API 26 至 API 37），更高的 API
+  版本尚未验证。
+- 浏览器宿主有自己的最低版本。开发时使用的 Helium 155 要求 Android 10 /
+  API 29 或更高。
 - 依赖 FluxDown 当前的包名和 `ExternalDownloadActivity` 组件。
 - 无法合并独立 `audioUrl` 音轨，因此该形式会被拒绝。
 - 部分厂商系统会强制停止前台服务，需要关闭电池限制。
@@ -171,6 +175,12 @@ Android 设备上的浏览器和 FluxDown。
 **熄屏一段时间后失效**
 
 将 App 设为无限制电池使用，保持前台通知，并检查 ROM 是否还有独立的自动启动或后台启动权限。
+
+如需查看不包含 URL、Cookie、令牌和请求体的请求级日志：
+
+```bash
+adb logcat -s FluxDownBridge
+```
 
 ## 贡献
 
