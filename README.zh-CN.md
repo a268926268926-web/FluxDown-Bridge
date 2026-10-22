@@ -25,6 +25,7 @@ Root 直接启动 FluxDown 的 `ExternalDownloadActivity`。
 - 支持 `http`、`https`、`ftp`、`magnet` 与 `ed2k`。
 - 以前台服务运行，支持静默通知和开机恢复。
 - 使用 Material 3 Expressive、Android 动态取色和安全区域边到边布局。
+- 使用纯 Kotlin 实现，不引入 JNI 或原生 ABI 构建矩阵。
 - 不修改 FluxDown 和浏览器扩展，避免增加两套更新维护成本。
 
 ## 环境要求

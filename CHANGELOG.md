@@ -2,6 +2,17 @@
 
 All notable changes are documented here.
 
+## [1.6.0] - 2026-10-23
+
+### Changed
+
+- Migrated the remaining Java components to Kotlin, including the HTTP server,
+  foreground service, preferences, Root launcher, and boot receiver.
+- Preserved the loopback protocol, 12-worker concurrency limit, three-second
+  idle timeout, request logging, notification behavior, and Root command path.
+- Documented the rationale for Kotlin on Android and the boundary where Rust
+  could become appropriate for a future portable engine.
+
 ## [1.5.2] - 2026-10-23
 
 ### Added

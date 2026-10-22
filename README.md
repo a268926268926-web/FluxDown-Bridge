@@ -28,6 +28,7 @@ root to open FluxDown's `ExternalDownloadActivity` directly.
 - Runs as an Android foreground service with an optional quiet notification.
 - Can restore the service after reboot when the user has enabled it.
 - Provides Material 3 Expressive UI, Android dynamic color, and safe edge-to-edge insets.
+- Uses a pure Kotlin Android implementation with no JNI or native-ABI matrix.
 - Keeps FluxDown and the browser extension unchanged, so it does not add a
   second update-maintenance surface for either project.
 

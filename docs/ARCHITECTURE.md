@@ -23,12 +23,12 @@ FluxDown APK remain unchanged.
 
 ## Implementation language
 
-The Android application intentionally uses Kotlin plus a small Java adapter:
+The Android application is implemented entirely in Kotlin:
 
-- Kotlin handles Compose UI, lifecycle, service controls, preferences, and
-  platform integration.
-- Java implements the compact HTTP server and root-process adapter without an
-  additional framework or asynchronous runtime.
+- Compose UI, lifecycle, service controls, preferences, and platform
+  integration use Kotlin.
+- The compact HTTP server and root-process adapter use Kotlin with JDK sockets,
+  executors, and process APIs rather than an additional framework or runtime.
 
 Rust is not used in the bridge itself. A Rust rewrite would still require the
 JVM/Compose process for Android UI and service APIs, while adding JNI/NDK build
