@@ -1,0 +1,82 @@
+name: Bug report
+description: Report a reproducible problem with FluxDown Bridge.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include bridge tokens, cookies, private URLs, Root credentials, or personal data.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start the bridge
+        2. Configure the extension
+        3. Open ...
+    validations:
+      required: true
+
+  - type: input
+    id: bridge-version
+    attributes:
+      label: FluxDown Bridge version
+      placeholder: 1.5.0 / commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: fluxdown-version
+    attributes:
+      label: FluxDown version
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Device and Android version
+      placeholder: OnePlus 15, Android 17
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+    validations:
+      required: true
+
+  - type: input
+    id: root
+    attributes:
+      label: Root provider and version
+      placeholder: KernelSU / Magisk / other
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove tokens, cookies, account identifiers, and private URLs.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed secrets and personal data from this report.
+          required: true

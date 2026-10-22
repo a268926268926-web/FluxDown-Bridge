@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/a268926268926-web/FluxDown-Bridge/security/advisories/new
+    about: Report exploitable behavior privately.
+  - name: FluxDown upstream
+    url: https://github.com/zerx-lab/FluxDown/issues
+    about: Report bugs in FluxDown itself upstream.

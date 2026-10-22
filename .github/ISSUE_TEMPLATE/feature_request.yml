@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused improvement.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user-facing problem should this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security or compatibility impact
+      description: Explain any effect on loopback-only binding, Root use, authentication, or FluxDown updates.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This request keeps the bridge scoped to loopback or explicitly explains why it cannot.
+          required: true
+        - label: I searched existing issues and pull requests.
+          required: true

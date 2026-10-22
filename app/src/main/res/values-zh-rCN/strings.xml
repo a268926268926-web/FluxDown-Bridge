@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FluxDown Bridge</string>
+    <string name="notification_channel">浏览器桥接</string>
+    <string name="notification_channel_quiet">浏览器桥接（静默）</string>
+    <string name="notification_title">FluxDown Bridge 正在运行</string>
+    <string name="notification_text">正在监听 127.0.0.1:17800</string>
+</resources>

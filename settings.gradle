@@ -1,0 +1,33 @@
+pluginManagement {
+    def useAliyunMirror = providers.gradleProperty("useAliyunMirror")
+            .map(String::toBoolean)
+            .orElse(false)
+    repositories {
+        if (useAliyunMirror.get()) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    def useAliyunMirror = providers.gradleProperty("useAliyunMirror")
+            .map(String::toBoolean)
+            .orElse(false)
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        if (useAliyunMirror.get()) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+        }
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "FluxDownBridge"
+include(":app")
