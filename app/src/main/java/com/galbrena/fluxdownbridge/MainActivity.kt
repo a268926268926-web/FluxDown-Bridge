@@ -3,8 +3,10 @@ package com.galbrena.fluxdownbridge
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.app.NotificationManager
 import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
@@ -94,6 +96,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -121,6 +124,23 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class RootState { Idle, Checking, Ok, Failed }
+
+private data class NotificationState(
+    val appEnabled: Boolean,
+    val channelImportance: Int,
+) {
+    val blocked: Boolean
+        get() = !appEnabled || channelImportance == NotificationManager.IMPORTANCE_NONE
+}
+
+private fun notificationState(context: Context): NotificationState {
+    val manager = context.getSystemService(NotificationManager::class.java)
+    val channel = manager.getNotificationChannel(BridgeService.notificationChannelId(context))
+    return NotificationState(
+        appEnabled = manager.areNotificationsEnabled(),
+        channelImportance = channel?.importance ?: NotificationManager.IMPORTANCE_NONE,
+    )
+}
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -170,8 +190,14 @@ private fun BridgeScreen() {
     var token by remember { mutableStateOf(BridgePrefs.token(context)) }
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
     var quietNotifications by remember { mutableStateOf(BridgePrefs.quietNotifications(context)) }
+    var currentNotificationState by remember { mutableStateOf(notificationState(context)) }
     var rootState by remember { mutableStateOf(RootState.Idle) }
     var rootMessage by remember { mutableStateOf("") }
+
+    LifecycleResumeEffect(Unit) {
+        currentNotificationState = notificationState(context)
+        onPauseOrDispose {}
+    }
 
     val statusColor by animateColorAsState(
         if (serviceEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
@@ -284,10 +310,12 @@ private fun BridgeScreen() {
                 SectionLabel("应用设置")
                 NotificationCard(
                     quiet = quietNotifications,
+                    notificationState = currentNotificationState,
                     onQuietChange = {
                         quietNotifications = it
                         BridgePrefs.setQuietNotifications(context, it)
                         BridgeService.refreshNotification(context)
+                        currentNotificationState = notificationState(context)
                         scope.launch {
                             snackbar.showSnackbar(if (it) "已切换为静默通知" else "已恢复标准通知")
                         }
@@ -330,6 +358,7 @@ private fun BridgeScreen() {
 @Composable
 private fun NotificationCard(
     quiet: Boolean,
+    notificationState: NotificationState,
     onQuietChange: (Boolean) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -350,7 +379,7 @@ private fun NotificationCard(
                 Column(Modifier.weight(1f)) {
                     Text("服务通知", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "系统 Monet 色图标与静默显示",
+                        "标准通知、静默或按系统设置关闭",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -381,8 +410,52 @@ private fun NotificationCard(
                     Switch(checked = quiet, onCheckedChange = onQuietChange)
                 }
             }
+            if (notificationState.blocked) {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Security,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                "通知当前已关闭",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                            Text(
+                                "这不一定有问题。若出现间歇断连，可能是部分系统降低了隐藏通知的前台服务优先级，可以试着恢复通知排查。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
+            } else if (quiet) {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "正在使用最低优先级通知。若出现间歇断连，可以试着恢复标准通知作对比。",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
             Text(
-                "Android 要求前台服务保留一条通知，App 无法完全删除。若需要彻底关闭，请使用“系统设置”把本应用或通知渠道设为关闭。",
+                "Android 要求前台服务声明一条通知。关闭通知后服务仍会启动；如果遇到不稳定，恢复应用通知或标准通知渠道通常值得优先尝试。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

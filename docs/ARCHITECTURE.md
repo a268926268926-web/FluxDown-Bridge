@@ -21,6 +21,25 @@ FluxDown APK remain unchanged.
 | `BridgePrefs` | App-private token, enabled state, and quiet-notification preference |
 | `BootReceiver` | Restarts the service after boot only when the user left it enabled |
 
+## Implementation language
+
+The Android application intentionally uses Kotlin plus a small Java adapter:
+
+- Kotlin handles Compose UI, lifecycle, service controls, preferences, and
+  platform integration.
+- Java implements the compact HTTP server and root-process adapter without an
+  additional framework or asynchronous runtime.
+
+Rust is not used in the bridge itself. A Rust rewrite would still require the
+JVM/Compose process for Android UI and service APIs, while adding JNI/NDK build
+variants, binary size, lifecycle bridging, and crash-debugging complexity for a
+workload that handles only a few short loopback requests.
+
+Rust becomes appropriate if FluxDown Bridge later grows a portable, CPU-heavy
+download engine, protocol parser, hashing pipeline, or shared desktop/mobile
+core. That component should then be isolated behind a stable native interface;
+the Android service and notification layer should remain Kotlin.
+
 ## Request flow
 
 ```mermaid

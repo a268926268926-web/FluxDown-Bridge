@@ -202,6 +202,13 @@ Please report vulnerabilities according to [SECURITY.md](SECURITY.md).
 Enable unrestricted battery use, keep the foreground notification visible, and
 check whether the ROM has a separate background-start or autostart permission.
 
+**I disabled notifications and it became less reliable**
+
+Notifications are a choice. Some vendor systems reduce the priority of a
+foreground service when its notification is hidden. If intermittent disconnects
+appear after disabling app or channel notifications, restore the standard
+notification temporarily and compare before changing other settings.
+
 For request-level diagnostics that contain no URLs, cookies, tokens, or bodies:
 
 ```bash

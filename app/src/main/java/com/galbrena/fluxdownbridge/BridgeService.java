@@ -11,8 +11,10 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 public final class BridgeService extends Service {
+    private static final String TAG = "FluxDownBridge";
     static final String ACTION_START = "com.galbrena.fluxdownbridge.START";
     static final String ACTION_STOP = "com.galbrena.fluxdownbridge.STOP";
     static final String ACTION_REFRESH = "com.galbrena.fluxdownbridge.REFRESH";
@@ -128,11 +130,28 @@ public final class BridgeService extends Service {
     }
 
     private void refreshForeground() {
+        logNotificationState();
         Notification updated = notification();
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, updated, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
             startForeground(NOTIFICATION_ID, updated);
+        }
+    }
+
+    private void logNotificationState() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        boolean appEnabled = manager.areNotificationsEnabled();
+        NotificationChannel channel = manager.getNotificationChannel(notificationChannelId(this));
+        int importance = channel == null ? NotificationManager.IMPORTANCE_NONE : channel.getImportance();
+        if (!appEnabled || importance == NotificationManager.IMPORTANCE_NONE) {
+            Log.w(TAG, "foreground notification blocked"
+                    + " appEnabled=" + appEnabled
+                    + " channelImportance=" + importance);
+        } else {
+            Log.i(TAG, "foreground notification enabled"
+                    + " appEnabled=true"
+                    + " channelImportance=" + importance);
         }
     }
 

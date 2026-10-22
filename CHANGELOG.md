@@ -2,6 +2,20 @@
 
 All notable changes are documented here.
 
+## [1.5.2] - 2026-10-23
+
+### Added
+
+- Detect when Android notifications or the active bridge notification channel
+  are disabled and show an in-app troubleshooting hint.
+- Log whether the foreground notification is enabled without recording message
+  contents or credentials.
+
+### Changed
+
+- Present notification visibility as a diagnostic choice rather than a hard
+  requirement: standard notification, quiet notification, or system-disabled.
+
 ## [1.5.1] - 2026-10-23
 
 ### Fixed
