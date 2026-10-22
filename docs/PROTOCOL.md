@@ -41,7 +41,7 @@ GET /ping HTTP/1.1
   "success": true,
   "message": "pong",
   "app": "FluxDown Android Bridge",
-  "version": "1.6.0"
+  "version": "1.6.1"
 }
 ```
 

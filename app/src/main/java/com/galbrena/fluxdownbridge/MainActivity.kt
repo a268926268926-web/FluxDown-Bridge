@@ -308,6 +308,11 @@ private fun BridgeScreen() {
                     onRegenerate = ::regenerateToken,
                 )
                 SectionLabel("应用设置")
+                RootCard(
+                    state = rootState,
+                    message = rootMessage,
+                    onTest = ::testRoot,
+                )
                 NotificationCard(
                     quiet = quietNotifications,
                     notificationState = currentNotificationState,
@@ -333,11 +338,6 @@ private fun BridgeScreen() {
                             )
                         }
                     },
-                )
-                RootCard(
-                    state = rootState,
-                    message = rootMessage,
-                    onTest = ::testRoot,
                 )
                 SectionLabel("首次设置")
                 SetupCard()

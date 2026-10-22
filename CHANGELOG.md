@@ -2,6 +2,13 @@
 
 All notable changes are documented here.
 
+## [1.6.1] - 2026-10-23
+
+### Changed
+
+- Moved the Root channel card before the service-notification card so the core
+  handoff prerequisite appears before notification preferences.
+
 ## [1.6.0] - 2026-10-23
 
 ### Changed
