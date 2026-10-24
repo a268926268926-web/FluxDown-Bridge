@@ -2,6 +2,26 @@
 
 All notable changes are documented here.
 
+## [1.7.0] - 2026-10-25
+
+### Changed
+
+- Show actual listener lifecycle states and startup failures instead of treating
+  the saved enabled preference as a successful connection.
+- Reload access tokens without stopping the server or relying on a UI timer.
+- Distinguish a missing notification channel from a disabled one; route settings
+  to the application or channel as appropriate and make the quiet row toggleable.
+- Buffer HTTP request reads and validate complete batches before dispatch.
+- Report batch progress and the failed item while preserving the intake interval.
+- Support an external release signing configuration while preserving the
+  existing maintainer certificate and upgrade compatibility.
+- Add focused protocol regression tests to CI.
+
+### Known limitations
+
+- Large batches can still exceed the extension's 15-second timeout. The 250 ms
+  intake interval is retained until FluxDown provides an acknowledged batch API.
+
 ## [1.6.1] - 2026-10-23
 
 ### Changed

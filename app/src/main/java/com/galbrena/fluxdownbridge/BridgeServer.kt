@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -22,7 +23,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-internal class BridgeServer(private val token: String) {
+internal class BridgeServer(
+    @Volatile private var token: String,
+    private val launcher: (String) -> RootLauncher.Result = RootLauncher::openFluxDown,
+) {
     companion object {
         private const val TAG = "FluxDownBridge"
         private const val APP_VERSION = BuildConfig.VERSION_NAME
@@ -50,17 +54,23 @@ internal class BridgeServer(private val token: String) {
     @Volatile
     private var acceptThread: Thread? = null
 
-    fun start() {
+    fun updateToken(newToken: String) {
+        token = newToken
+    }
+
+    fun start(port: Int = PORT) {
         if (!running.compareAndSet(false, true)) return
         serverSocket = ServerSocket().apply {
             reuseAddress = true
             bind(
-                InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT),
+                InetSocketAddress(InetAddress.getByName("127.0.0.1"), port),
                 50,
             )
         }
         acceptThread = Thread(::acceptLoop, "fluxdown-bridge").also { it.start() }
     }
+
+    internal val localPort: Int get() = serverSocket?.localPort ?: -1
 
     fun stop() {
         running.set(false)
@@ -101,7 +111,7 @@ internal class BridgeServer(private val token: String) {
             socket.use { connection ->
                 connection.soTimeout = SOCKET_READ_TIMEOUT_MS
                 connection.tcpNoDelay = true
-                val request = readRequest(connection.getInputStream())
+                val request = readRequest(BufferedInputStream(connection.getInputStream()))
                     ?: throw IOException("invalid HTTP request")
                 method = request.method
                 path = request.path
@@ -165,7 +175,7 @@ internal class BridgeServer(private val token: String) {
     private fun handleOne(request: HttpRequest): HttpResponse {
         if (!authorized(request)) return HttpResponse(401, error("remote_auth_failed"))
         return try {
-            launch(JSONObject(request.body))
+            launchProtocol(buildProtocolUri(JSONObject(request.body)))
             ok("sent to FluxDown")
         } catch (error: Exception) {
             HttpResponse(400, error(error.message))
@@ -174,26 +184,47 @@ internal class BridgeServer(private val token: String) {
 
     private fun handleBatch(request: HttpRequest): HttpResponse {
         if (!authorized(request)) return HttpResponse(401, error("remote_auth_failed"))
+        var total = 0
+        var sent = 0
+        var itemIndex = 0
         return try {
-            val root = JSONObject(request.body)
-            val items: JSONArray = root.optJSONArray("items")
+            val items: JSONArray = JSONObject(request.body).optJSONArray("items")
                 ?: throw IllegalArgumentException("items array required")
-            if (items.length() == 0) {
-                throw IllegalArgumentException("items array required")
-            }
-            for (index in 0 until items.length()) {
+            total = items.length()
+            if (total == 0) throw IllegalArgumentException("items array required")
+            // Validate the whole batch before opening any activity.
+            val protocols = (0 until total).map { index ->
+                itemIndex = index + 1
                 val item = items.optJSONObject(index)
-                    ?: throw IllegalArgumentException("item $index is not an object")
-                launch(item)
-                if (index + 1 < items.length()) Thread.sleep(250)
+                    ?: throw IllegalArgumentException("item $itemIndex is not an object")
+                buildProtocolUri(item)
             }
-            ok("${items.length()} item(s) sent to FluxDown")
-        } catch (error: Exception) {
-            HttpResponse(400, error(error.message))
+            protocols.forEachIndexed { index, protocol ->
+                itemIndex = index + 1
+                launchProtocol(protocol)
+                sent++
+                // FluxDown 0.5.9 uses a Compose sheet to collect successive intents.
+                // Keep this interval until upstream exposes an acknowledged batch intake.
+                if (sent < total) Thread.sleep(250)
+            }
+            HttpResponse(200, JSONObject()
+                .put("success", true)
+                .put("message", "$sent item(s) sent to FluxDown")
+                .put("sent", sent)
+                .put("total", total)
+                .toString())
+        } catch (failure: Exception) {
+            HttpResponse(400, JSONObject()
+                .put("success", false)
+                .put("message", "$sent/$total item(s) sent; item $itemIndex failed: ${failure.message}")
+                .put("sent", sent)
+                .put("total", total)
+                .put("failedIndex", itemIndex)
+                .toString())
         }
     }
 
-    private fun launch(item: JSONObject) {
+    private fun buildProtocolUri(item: JSONObject): String {
         val url = item.optString("url", "").trim()
         if (url.isEmpty()) throw IllegalArgumentException("missing url")
         val scheme = runCatching { URI(url).scheme.orEmpty().lowercase(Locale.ROOT) }
@@ -218,7 +249,11 @@ internal class BridgeServer(private val token: String) {
                     ?.let { headers -> append(it, "headers", headers.toString()) }
             }
 
-        val result = RootLauncher.openFluxDown(uri.toString())
+        return uri.toString()
+    }
+
+    private fun launchProtocol(protocol: String) {
+        val result = launcher(protocol)
         if (!result.ok()) {
             throw IllegalStateException("root launch failed: ${result.output}")
         }

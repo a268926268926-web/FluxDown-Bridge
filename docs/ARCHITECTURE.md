@@ -67,9 +67,13 @@ download remains FluxDown's responsibility.
 1. The user enables the service from the UI.
 2. `BridgeService` calls `startForeground` before accepting traffic.
 3. `BridgeServer` binds to `127.0.0.1:17800`.
-4. A fixed four-thread executor handles client connections.
+4. A fixed twelve-thread executor handles client connections.
 5. `onDestroy` closes the listening socket and interrupts worker threads.
 6. `START_STICKY` allows Android to recreate the service when appropriate.
+7. A process-local StateFlow publishes listener lifecycle events to the UI; the
+   stored enabled preference represents user intent, not proof of a live port.
+8. The service observes access-token preference changes and updates the existing
+   server in place. No UI timer or service restart is involved.
 
 The service never binds to `0.0.0.0` and has no LAN discovery mechanism.
 
@@ -91,7 +95,7 @@ the root command.
 - `MessageDigest.isEqual` performs constant-time token comparison.
 - Request headers are limited to 32 KiB and bodies to 2 MiB.
 - Supported schemes are allowlisted.
-- Each socket has a 10-second read timeout.
+- Each socket has a 3-second read timeout; headers and bodies share a buffered input stream.
 - Root process execution is serialized and limited to 20 seconds.
 - Backups are disabled in the manifest.
 - The foreground notification provides a visible reminder while the server runs.

@@ -20,7 +20,9 @@ Root 直接启动 FluxDown 的 `ExternalDownloadActivity`。
 
 - 只监听 `127.0.0.1:17800`，不绑定 Wi-Fi 或局域网。
 - 使用 `SecureRandom` 生成 256 位随机访问令牌。
-- 支持单条和批量下载投递。
+- 支持单条和批量投递，批量开始前统一校验参数。
+- 显示服务实际启动、监听、停止和失败状态，无需轮询。
+- 令牌原地更新，更新时不重启监听。
 - 转发文件名、Cookie、Referer 和请求头。
 - 支持 `http`、`https`、`ftp`、`magnet` 与 `ed2k`。
 - 以前台服务运行，支持静默通知和开机恢复。
@@ -45,7 +47,7 @@ Root 只用于跳过 Chromium 的自定义协议确认页，HTTP 服务和通知
 1. 安装 FluxDown Android 版与 FluxDown 浏览器扩展。
 2. 从 [Releases](https://github.com/a268926268926-web/FluxDown-Bridge/releases)
    安装 Bridge，或从源码构建。
-3. 打开 **FluxDown Bridge**，允许通知，然后点击 **测试 Root**。
+3. 打开 **FluxDown Bridge**，按需选择是否显示通知，然后点击 **测试 Root**。
 4. 在 Root 管理器中永久授权。
 5. 点击 **启动服务**。
 6. 在扩展的“远程服务器”设置中填写：
@@ -100,8 +102,16 @@ app/build/outputs/apk/debug/app-debug.apk
 如果所在网络访问阿里云 Maven 更快，可在 Gradle 命令后添加
 `-PuseAliyunMirror=true`。默认仓库仍是 Google Maven 与 Maven Central。
 
-仓库不包含正式签名密钥。GitHub Release 中的兼容安装包使用 Android Debug
-证书签名；正式分发前，维护者应配置自己的私有 Release 签名。
+官方 Release 沿用原有维护者证书，已安装用户可以覆盖升级。证书名称仍为
+`Android Debug`，但密钥已经独立保存在仓库外并备份；其他机器生成的 Debug 证书
+不是同一身份，不能用来覆盖官方安装包。
+
+发布时通过 `FLUXDOWN_SIGNING_PROPERTIES` 指定仓库外的属性文件，包含
+`storeFile`、`storePassword`、`keyAlias`、`keyPassword`。未配置时，本地和 CI
+使用各自的 Debug 密钥，仅用于测试。
+
+可用 `./gradlew :app:testDebugUnitTest` 运行缓冲读取、令牌热更新、空闲连接和
+批量校验回归；测试不会启动真实下载或请求 Root。
 
 ## API 概览
 
@@ -135,7 +145,7 @@ curl http://127.0.0.1:17800/download \
 - 服务只绑定 IPv4 回环地址。
 - 令牌保存在应用私有 `SharedPreferences` 中，并使用常量时间比较。
 - 请求头上限 32 KiB，请求体上限 2 MiB。
-- Socket 读取超时为 10 秒，Root 启动命令超时为 20 秒。
+- Socket 读取超时为 3 秒，Root 启动命令超时为 20 秒。
 - Cookie 和请求头会随投递 URI 转发给 FluxDown，因为认证下载需要这些信息。
 - Root 权限具有较高风险，请只安装来自可信源码或维护者的 APK。
 
@@ -160,7 +170,7 @@ Android 设备上的浏览器和 FluxDown。
 
 **扩展显示“未连接”**
 
-1. 确认 Bridge 通知显示正在运行。
+1. 查看 Bridge 内的实际监听状态；启动失败时会显示原因。
 2. 在同一台手机的浏览器打开 `http://127.0.0.1:17800/ping`。
 3. 重新复制令牌并测试 `/api/v1/info`。
 4. 关闭 FluxDown Bridge 的电池优化。
@@ -179,9 +189,8 @@ Android 设备上的浏览器和 FluxDown。
 
 **关闭通知后感觉变得不稳定**
 
-通知是可选项。部分厂商系统会在前台服务通知被隐藏后降低服务优先级。如果关闭
-应用通知或通知渠道后出现间歇断连，可以先把标准通知恢复一段时间做对比，再判断
-是否确实与通知有关。
+通知是可选项。如果关闭应用通知或通知渠道后出现间歇断连，可以先把标准通知
+恢复一段时间做对比。仅凭相关性不能断定系统降低了进程优先级。
 
 如需查看不包含 URL、Cookie、令牌和请求体的请求级日志：
 

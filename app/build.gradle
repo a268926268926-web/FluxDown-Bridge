@@ -3,6 +3,20 @@ plugins {
     id "org.jetbrains.kotlin.plugin.compose"
 }
 
+// A private properties file preserves the maintainer's existing signing identity.
+// CI can still build test APKs without receiving any signing credentials.
+def signingPropertiesPath = providers.gradleProperty("releaseSigningProperties")
+        .orElse(providers.environmentVariable("FLUXDOWN_SIGNING_PROPERTIES"))
+def releaseSigning = new Properties()
+if (signingPropertiesPath.isPresent()) {
+    def signingFile = file(signingPropertiesPath.get())
+    if (!signingFile.isFile()) throw new GradleException("Release signing properties file is missing")
+    signingFile.withInputStream { releaseSigning.load(it) }
+    ["storeFile", "storePassword", "keyAlias", "keyPassword"].each {
+        if (!releaseSigning.getProperty(it)) throw new GradleException("Missing signing property: " + it)
+    }
+}
+
 android {
     namespace "com.galbrena.fluxdownbridge"
     compileSdk 37
@@ -12,15 +26,26 @@ android {
         applicationId "com.galbrena.fluxdownbridge"
         minSdk 26
         targetSdk 37
-        versionCode 11
-        versionName "1.6.1"
+        versionCode 12
+        versionName "1.7.0"
+    }
+
+    signingConfigs {
+        if (signingPropertiesPath.isPresent()) {
+            maintainerRelease {
+                storeFile file(releaseSigning.getProperty("storeFile"))
+                storePassword releaseSigning.getProperty("storePassword")
+                keyAlias releaseSigning.getProperty("keyAlias")
+                keyPassword releaseSigning.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled true
             shrinkResources true
-            signingConfig signingConfigs.debug
+            signingConfig signingPropertiesPath.isPresent() ? signingConfigs.maintainerRelease : signingConfigs.debug
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
@@ -34,6 +59,10 @@ android {
         compose true
         buildConfig true
     }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -45,4 +74,6 @@ dependencies {
     implementation "androidx.compose.material3:material3:1.5.0-beta02"
     implementation "androidx.compose.material:material-icons-extended"
     debugImplementation "androidx.compose.ui:ui-tooling"
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
 }

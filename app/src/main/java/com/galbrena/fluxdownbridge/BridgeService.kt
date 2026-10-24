@@ -7,11 +7,15 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import java.net.BindException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class BridgeService : Service() {
     companion object {
@@ -22,21 +26,32 @@ class BridgeService : Service() {
         private const val CHANNEL_STANDARD = "fluxdown_bridge"
         private const val CHANNEL_QUIET = "fluxdown_bridge_quiet"
         private const val NOTIFICATION_ID = 4107
+        private val mutableRuntimeState = MutableStateFlow<BridgeRuntimeState>(BridgeRuntimeState.Stopped)
+        internal val runtimeState = mutableRuntimeState.asStateFlow()
 
         fun start(context: Context) {
+            BridgePrefs.setEnabled(context, true)
+            if (mutableRuntimeState.value != BridgeRuntimeState.Running) {
+                mutableRuntimeState.value = BridgeRuntimeState.Starting
+            }
             val intent = Intent(context, BridgeService::class.java).setAction(ACTION_START)
-            context.startForegroundService(intent)
+            try {
+                context.startForegroundService(intent)
+            } catch (error: Exception) {
+                Log.w(TAG, "foreground service failed to start: ${error.javaClass.simpleName}")
+                mutableRuntimeState.value = BridgeRuntimeState.Failed("无法启动服务，请重新打开应用后重试。")
+            }
         }
 
         fun stop(context: Context) {
             BridgePrefs.setEnabled(context, false)
-            context.startService(
-                Intent(context, BridgeService::class.java).setAction(ACTION_STOP),
-            )
+            if (!context.stopService(Intent(context, BridgeService::class.java))) {
+                mutableRuntimeState.value = BridgeRuntimeState.Stopped
+            }
         }
 
         fun refreshNotification(context: Context) {
-            if (!BridgePrefs.enabled(context)) return
+            if (mutableRuntimeState.value != BridgeRuntimeState.Running) return
             context.startService(
                 Intent(context, BridgeService::class.java).setAction(ACTION_REFRESH),
             )
@@ -44,50 +59,80 @@ class BridgeService : Service() {
 
         fun notificationChannelId(context: Context): String =
             if (BridgePrefs.quietNotifications(context)) CHANNEL_QUIET else CHANNEL_STANDARD
+
+        fun regenerateToken(context: Context): String = BridgePrefs.regenerateToken(context)
     }
 
     private var server: BridgeServer? = null
+    private var foregroundFailed = false
+    private val preferencesListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == BridgePrefs.TOKEN) server?.updateToken(BridgePrefs.token(this))
+    }
 
     override fun onCreate() {
         super.onCreate()
+        BridgePrefs.prefs(this).registerOnSharedPreferenceChangeListener(preferencesListener)
+        if (!BridgePrefs.enabled(this)) {
+            stopSelf()
+            return
+        }
+        mutableRuntimeState.value = BridgeRuntimeState.Starting
         createChannels()
-        startForegroundCompat(buildNotification())
+        refreshForeground()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: ACTION_START) {
             ACTION_STOP -> {
-                stopSelf()
-                return START_NOT_STICKY
-            }
-
-            ACTION_REFRESH -> if (server != null) {
-                refreshForeground()
-                return START_STICKY
-            }
-        }
-
-        BridgePrefs.setEnabled(this, true)
-        if (server == null) {
-            val candidate = BridgeServer(BridgePrefs.token(this))
-            try {
-                candidate.start()
-                server = candidate
-            } catch (error: Exception) {
-                Log.w(TAG, "bridge server failed to start: ${error.javaClass.simpleName}")
-                candidate.stop()
                 BridgePrefs.setEnabled(this, false)
                 stopSelf()
                 return START_NOT_STICKY
             }
+
+            ACTION_REFRESH -> {
+                if (server != null && BridgePrefs.enabled(this) && refreshForeground()) {
+                    return START_STICKY
+                }
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
-        refreshForeground()
-        return START_STICKY
+
+        if (!BridgePrefs.enabled(this) || foregroundFailed) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (server == null) {
+            mutableRuntimeState.value = BridgeRuntimeState.Starting
+            val candidate = BridgeServer(BridgePrefs.token(this))
+            try {
+                candidate.start()
+                server = candidate
+                mutableRuntimeState.value = BridgeRuntimeState.Running
+            } catch (error: Exception) {
+                Log.w(TAG, "bridge server failed to start: ${error.javaClass.simpleName}")
+                candidate.stop()
+                mutableRuntimeState.value = BridgeRuntimeState.Failed(
+                    if (error is BindException) {
+                        "端口 ${BridgeServer.PORT} 已被占用，请停止占用端口的服务后重试。"
+                    } else {
+                        "无法启动本地监听（${error.javaClass.simpleName}），请重试。"
+                    },
+                )
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
+        return if (refreshForeground()) START_STICKY else START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        BridgePrefs.prefs(this).unregisterOnSharedPreferenceChangeListener(preferencesListener)
         server?.stop()
         server = null
+        if (mutableRuntimeState.value !is BridgeRuntimeState.Failed || !BridgePrefs.enabled(this)) {
+            mutableRuntimeState.value = BridgeRuntimeState.Stopped
+        }
         super.onDestroy()
     }
 
@@ -124,7 +169,13 @@ class BridgeService : Service() {
         return Notification.Builder(this, notificationChannelId(this))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
+            .setContentText(
+                if (mutableRuntimeState.value == BridgeRuntimeState.Starting) {
+                    "正在启动本地桥接服务"
+                } else {
+                    getString(R.string.notification_text)
+                },
+            )
             .setColor(monetAccent())
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
@@ -133,9 +184,18 @@ class BridgeService : Service() {
             .build()
     }
 
-    private fun refreshForeground() {
-        logNotificationState()
-        startForegroundCompat(buildNotification())
+    private fun refreshForeground(): Boolean {
+        return try {
+            logNotificationState()
+            startForegroundCompat(buildNotification())
+            true
+        } catch (error: Exception) {
+            Log.w(TAG, "foreground notification failed: ${error.javaClass.simpleName}")
+            foregroundFailed = true
+            mutableRuntimeState.value = BridgeRuntimeState.Failed("无法启动前台服务，请检查系统设置后重试。")
+            stopSelf()
+            false
+        }
     }
 
     private fun startForegroundCompat(notification: Notification) {

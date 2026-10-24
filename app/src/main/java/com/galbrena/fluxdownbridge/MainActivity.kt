@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -91,14 +92,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -127,8 +130,10 @@ private enum class RootState { Idle, Checking, Ok, Failed }
 
 private data class NotificationState(
     val appEnabled: Boolean,
-    val channelImportance: Int,
+    val channelImportance: Int?,
 ) {
+    val channelCreated: Boolean
+        get() = channelImportance != null
     val blocked: Boolean
         get() = !appEnabled || channelImportance == NotificationManager.IMPORTANCE_NONE
 }
@@ -138,7 +143,7 @@ private fun notificationState(context: Context): NotificationState {
     val channel = manager.getNotificationChannel(BridgeService.notificationChannelId(context))
     return NotificationState(
         appEnabled = manager.areNotificationsEnabled(),
-        channelImportance = channel?.importance ?: NotificationManager.IMPORTANCE_NONE,
+        channelImportance = channel?.importance,
     )
 }
 
@@ -186,7 +191,7 @@ private fun BridgeScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var serviceEnabled by remember { mutableStateOf(BridgePrefs.enabled(context)) }
+    val serviceState by BridgeService.runtimeState.collectAsStateWithLifecycle()
     var token by remember { mutableStateOf(BridgePrefs.token(context)) }
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
     var quietNotifications by remember { mutableStateOf(BridgePrefs.quietNotifications(context)) }
@@ -194,13 +199,17 @@ private fun BridgeScreen() {
     var rootState by remember { mutableStateOf(RootState.Idle) }
     var rootMessage by remember { mutableStateOf("") }
 
-    LifecycleResumeEffect(Unit) {
+    LifecycleResumeEffect(serviceState) {
         currentNotificationState = notificationState(context)
         onPauseOrDispose {}
     }
 
     val statusColor by animateColorAsState(
-        if (serviceEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        when (serviceState) {
+            BridgeRuntimeState.Running, BridgeRuntimeState.Starting -> MaterialTheme.colorScheme.primary
+            is BridgeRuntimeState.Failed -> MaterialTheme.colorScheme.error
+            BridgeRuntimeState.Stopped -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
         animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
         label = "statusColor",
     )
@@ -212,33 +221,18 @@ private fun BridgeScreen() {
     }
 
     fun startService() {
-        BridgePrefs.setEnabled(context, true)
         BridgeService.start(context)
-        serviceEnabled = true
-        scope.launch { snackbar.showSnackbar("桥接服务已启动") }
     }
 
     fun stopService() {
         BridgeService.stop(context)
-        serviceEnabled = false
-        scope.launch { snackbar.showSnackbar("桥接服务已停止") }
     }
 
     fun regenerateToken() {
-        val wasRunning = serviceEnabled
-        if (wasRunning) BridgeService.stop(context)
-        token = BridgePrefs.regenerateToken(context)
+        token = BridgeService.regenerateToken(context)
         rootState = RootState.Idle
         rootMessage = ""
-        if (wasRunning) {
-            scope.launch {
-                delay(350)
-                BridgeService.start(context)
-                snackbar.showSnackbar("已生成新令牌，请在扩展中同步修改")
-            }
-        } else {
-            scope.launch { snackbar.showSnackbar("已生成新令牌") }
-        }
+        scope.launch { snackbar.showSnackbar("已生成新令牌，请在扩展中同步修改") }
     }
 
     fun testRoot() {
@@ -292,9 +286,9 @@ private fun BridgeScreen() {
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Header(serviceEnabled)
+                Header(serviceState)
                 HeroCard(
-                    enabled = serviceEnabled,
+                    state = serviceState,
                     statusColor = statusColor,
                     onStart = ::startService,
                     onStop = ::stopService,
@@ -326,16 +320,20 @@ private fun BridgeScreen() {
                         }
                     },
                     onOpenSettings = {
-                        val channelIntent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        val state = notificationState(context)
+                        val appIntent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                             .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                            .putExtra(Settings.EXTRA_CHANNEL_ID, BridgeService.notificationChannelId(context))
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        runCatching { context.startActivity(channelIntent) }.onFailure {
-                            context.startActivity(
-                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
+                        val settingsIntent = if (!state.appEnabled || !state.channelCreated) {
+                            appIntent
+                        } else {
+                            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                .putExtra(Settings.EXTRA_CHANNEL_ID, BridgeService.notificationChannelId(context))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching { context.startActivity(settingsIntent) }.onFailure {
+                            context.startActivity(appIntent)
                         }
                     },
                 )
@@ -396,7 +394,11 @@ private fun NotificationCard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {}
+                        .toggleable(value = quiet, role = Role.Switch, onValueChange = onQuietChange)
+                        .padding(horizontal = 16.dp, vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -407,7 +409,7 @@ private fun NotificationCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(checked = quiet, onCheckedChange = onQuietChange)
+                    Switch(checked = quiet, onCheckedChange = null)
                 }
             }
             if (notificationState.blocked) {
@@ -433,13 +435,19 @@ private fun NotificationCard(
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
                             Text(
-                                "这不一定有问题。若出现间歇断连，可能是部分系统降低了隐藏通知的前台服务优先级，可以试着恢复通知排查。",
+                                "通知可以按需关闭。若出现间歇断连，可能与通知设置有关，可以恢复通知作对比排查。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
                         }
                     }
                 }
+            } else if (!notificationState.channelCreated) {
+                Text(
+                    "启动服务后创建通知渠道。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else if (quiet) {
                 Surface(
                     shape = MaterialTheme.shapes.large,
@@ -455,7 +463,7 @@ private fun NotificationCard(
                 }
             }
             Text(
-                "Android 要求前台服务声明一条通知。关闭通知后服务仍会启动；如果遇到不稳定，恢复应用通知或标准通知渠道通常值得优先尝试。",
+                "Android 要求前台服务声明一条通知。你仍可在系统设置中选择是否显示；若遇到不稳定，可以恢复应用通知或标准通知渠道作对比。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -463,8 +471,19 @@ private fun NotificationCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun Header(enabled: Boolean) {
+private fun Header(state: BridgeRuntimeState) {
+    val containerColor = when (state) {
+        BridgeRuntimeState.Running, BridgeRuntimeState.Starting -> MaterialTheme.colorScheme.primaryContainer
+        is BridgeRuntimeState.Failed -> MaterialTheme.colorScheme.errorContainer
+        BridgeRuntimeState.Stopped -> MaterialTheme.colorScheme.surfaceContainerHighest
+    }
+    val contentColor = when (state) {
+        BridgeRuntimeState.Running, BridgeRuntimeState.Starting -> MaterialTheme.colorScheme.onPrimaryContainer
+        is BridgeRuntimeState.Failed -> MaterialTheme.colorScheme.onErrorContainer
+        BridgeRuntimeState.Stopped -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -495,29 +514,34 @@ private fun Header(enabled: Boolean) {
         }
         Surface(
             shape = CircleShape,
-            color = if (enabled) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.errorContainer
-            },
+            color = containerColor,
+            contentColor = contentColor,
         ) {
             Row(
                 Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                Icon(
-                    if (enabled) Icons.Rounded.CheckCircle else Icons.Rounded.Error,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = if (enabled) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onErrorContainer
-                    },
-                )
+                if (state == BridgeRuntimeState.Starting) {
+                    LoadingIndicator(modifier = Modifier.size(18.dp), color = contentColor)
+                } else {
+                    Icon(
+                        when (state) {
+                            BridgeRuntimeState.Running -> Icons.Rounded.CheckCircle
+                            is BridgeRuntimeState.Failed -> Icons.Rounded.Error
+                            else -> Icons.Rounded.Stop
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
                 Text(
-                    if (enabled) "运行中" else "已停止",
+                    when (state) {
+                        BridgeRuntimeState.Starting -> "启动中"
+                        BridgeRuntimeState.Running -> "运行中"
+                        BridgeRuntimeState.Stopped -> "已停止"
+                        is BridgeRuntimeState.Failed -> "启动失败"
+                    },
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
@@ -527,7 +551,7 @@ private fun Header(enabled: Boolean) {
 
 @Composable
 private fun HeroCard(
-    enabled: Boolean,
+    state: BridgeRuntimeState,
     statusColor: Color,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -568,9 +592,14 @@ private fun HeroCard(
                             modifier = Modifier.padding(12.dp).size(27.dp),
                         )
                     }
-                    Column {
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            if (enabled) "桥接服务正在监听" else "桥接服务未运行",
+                            when (state) {
+                                BridgeRuntimeState.Starting -> "正在启动桥接服务"
+                                BridgeRuntimeState.Running -> "桥接服务正在监听"
+                                BridgeRuntimeState.Stopped -> "桥接服务未运行"
+                                is BridgeRuntimeState.Failed -> "桥接服务启动失败"
+                            },
                             style = MaterialTheme.typography.titleLarge,
                         )
                         Text(
@@ -598,8 +627,14 @@ private fun HeroCard(
                         )
                         Spacer(Modifier.width(9.dp))
                         Text(
-                            if (enabled) "扩展可以直接投递下载" else "启动后扩展才能连接",
+                            when (state) {
+                                BridgeRuntimeState.Starting -> "正在建立本地监听"
+                                BridgeRuntimeState.Running -> "扩展可以直接投递下载"
+                                BridgeRuntimeState.Stopped -> "启动后扩展才能连接"
+                                is BridgeRuntimeState.Failed -> state.message
+                            },
                             style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
@@ -609,7 +644,7 @@ private fun HeroCard(
                 ) {
                     FilledTonalButton(
                         onClick = onStart,
-                        enabled = !enabled,
+                        enabled = !state.active,
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null)
@@ -618,7 +653,7 @@ private fun HeroCard(
                     }
                     Button(
                         onClick = onStop,
-                        enabled = enabled,
+                        enabled = state != BridgeRuntimeState.Stopped,
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Rounded.Stop, contentDescription = null)

@@ -41,7 +41,7 @@ GET /ping HTTP/1.1
   "success": true,
   "message": "pong",
   "app": "FluxDown Android Bridge",
-  "version": "1.6.1"
+  "version": "1.7.0"
 }
 ```
 
@@ -131,9 +131,20 @@ Success:
 }
 ```
 
-The operation stops at the first invalid item or Root launch failure. It is not
-transactional: items launched before the failure may already have reached
-FluxDown.
+All items are validated before the first launch. Invalid input returns `400`
+with `sent: 0`. During actual dispatch, the operation stops at the first Root
+launch failure; responses include `sent`, `total`, and a one-based `failedIndex`
+on failure. The `message` also includes these counts because the current
+extension displays only `success` and `message`.
+
+`sent` counts successful activity launch commands, not completed downloads or
+confirmed task creation. A partial failure cannot roll back prior launches;
+retrying the whole batch may duplicate those items.
+
+The 250 ms interval remains for FluxDown 0.5.9's asynchronous intake. Its browser
+extension uses a 15-second request timeout, so large batches can still time out
+(the fixed waits alone total 24.75 seconds for 100 items). There is no background
+queue or early success acknowledgment in this release.
 
 ## Error responses
 

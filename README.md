@@ -22,7 +22,9 @@ root to open FluxDown's `ExternalDownloadActivity` directly.
 
 - Listens only on `127.0.0.1:17800`; it never binds to Wi-Fi or the LAN.
 - Uses a 256-bit random bearer token for authenticated endpoints.
-- Supports single and batch download handoffs.
+- Supports single and batch download handoffs, with full-batch validation before launching.
+- Reports actual listener startup, stop, and failure states in the UI without polling.
+- Updates access tokens in place without restarting the listener.
 - Forwards filename, cookies, referrer, and request headers to FluxDown.
 - Supports `http`, `https`, `ftp`, `magnet`, and `ed2k` links.
 - Runs as an Android foreground service with an optional quiet notification.
@@ -51,7 +53,7 @@ server or notification handling.
 1. Install FluxDown for Android and the FluxDown browser extension.
 2. Install the bridge APK from [Releases](https://github.com/a268926268926-web/FluxDown-Bridge/releases)
    or build it from source.
-3. Open **FluxDown Bridge**, allow notifications, and tap **Test Root**.
+3. Open **FluxDown Bridge**, choose whether to show notifications, and tap **Test Root**.
 4. Grant the Root manager permanent access when prompted.
 5. Tap **Start Service**.
 6. In the extension's remote-server settings, enter:
@@ -110,10 +112,19 @@ On networks where Aliyun Maven is faster, append
 `-PuseAliyunMirror=true` to a Gradle command. Official Google/Maven Central
 repositories remain the default.
 
-The project does not ship a production signing key. GitHub releases built from
-this repository are convenience builds signed with the Android debug
-certificate; maintainers should configure their own private release signing
-configuration before distributing a production APK.
+Official release APKs keep the original maintainer certificate so existing users
+can update without uninstalling. Its subject still says `Android Debug` for
+historical reasons; the private keystore is kept outside the repository and
+backed up. Independently generated debug certificates are different identities.
+
+To sign a release with a persistent key, set `FLUXDOWN_SIGNING_PROPERTIES` to an
+external properties file containing `storeFile`, `storePassword`, `keyAlias`, and
+`keyPassword`. Without it, local/CI builds use a local debug key and are test
+builds, not interchangeable updates of the published APK.
+
+Run the focused protocol regressions with `./gradlew :app:testDebugUnitTest`.
+They cover buffered UTF-8 requests, live token changes, idle connections, and
+batch validation/results without launching downloads or requesting Root.
 
 ## API summary
 
@@ -149,7 +160,7 @@ The complete request and response schema is documented in
 - The token is generated with `SecureRandom`, stored in app-private
   `SharedPreferences`, and compared in constant time.
 - Request headers are capped at 32 KiB and request bodies at 2 MiB.
-- Sockets use a 10-second read timeout and the root launch command has a
+- Sockets use a 3-second read timeout and the root launch command has a
   20-second timeout.
 - Cookies and request headers are forwarded as part of the handoff URI because
   FluxDown needs them for authenticated downloads.
@@ -184,7 +195,7 @@ Please report vulnerabilities according to [SECURITY.md](SECURITY.md).
 
 **The extension says “not connected”**
 
-1. Confirm the bridge notification says it is running.
+1. Check the listener state in the bridge app; a startup failure now includes a reason.
 2. Open `http://127.0.0.1:17800/ping` from a browser on the same device.
 3. Re-copy the token from the app and test `/api/v1/info`.
 4. Disable battery optimization for FluxDown Bridge.
@@ -205,10 +216,9 @@ check whether the ROM has a separate background-start or autostart permission.
 
 **I disabled notifications and it became less reliable**
 
-Notifications are a choice. Some vendor systems reduce the priority of a
-foreground service when its notification is hidden. If intermittent disconnects
-appear after disabling app or channel notifications, restore the standard
-notification temporarily and compare before changing other settings.
+Notifications are a choice. If intermittent disconnects appear after disabling
+app or channel notifications, temporarily restore the standard notification and
+compare. A correlation alone does not establish a change in process priority.
 
 For request-level diagnostics that contain no URLs, cookies, tokens, or bodies:
 
