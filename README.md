@@ -24,10 +24,13 @@ root to open FluxDown's `ExternalDownloadActivity` directly.
 - Uses a 256-bit random bearer token for authenticated endpoints.
 - Supports single and batch download handoffs, with full-batch validation before launching.
 - Reports actual listener startup, stop, and failure states in the UI without polling.
+- Shows the latest interface request and handoff result from process-local events.
 - Updates access tokens in place without restarting the listener.
 - Forwards filename, cookies, referrer, and request headers to FluxDown.
 - Supports `http`, `https`, `ftp`, `magnet`, and `ed2k` links.
-- Runs as an Android foreground service with an optional quiet notification.
+- Runs as an Android foreground service; Android settings control notification
+  visibility, and opening the app does not request notification permission again.
+- Keeps connection setup collapsed and asks before resetting an access token.
 - Can restore the service after reboot when the user has enabled it.
 - Provides Material 3 Expressive UI, Android dynamic color, and safe edge-to-edge insets.
 - Uses a pure Kotlin Android implementation with no JNI or native-ABI matrix.
@@ -53,18 +56,22 @@ server or notification handling.
 1. Install FluxDown for Android and the FluxDown browser extension.
 2. Install the bridge APK from [Releases](https://github.com/a268926268926-web/FluxDown-Bridge/releases)
    or build it from source.
-3. Open **FluxDown Bridge**, choose whether to show notifications, and tap **Test Root**.
+3. Open **FluxDown Bridge** and tap **Test Root**. Use **Manage notification visibility** to choose whether notifications are shown.
 4. Grant the Root manager permanent access when prompted.
-5. Tap **Start Service**.
+5. Tap **Start**.
 6. In the extension's remote-server settings, enter:
    - URL: `http://127.0.0.1:17800`
-   - Token: copy the token shown in the bridge app
+   - Token: expand **Connection setup** in the bridge app and copy the token
    - Download mode: `Always` or `Remote only`
 7. Turn off the extension's **FluxDown custom protocol** option.
 8. Start a normal HTTP or HTTPS download and confirm that FluxDown opens directly.
 
 If the OEM stops foreground services in the background, set FluxDown Bridge to
 **Unrestricted** under Android battery settings.
+
+If using a background freezer such as Freezer, add **FluxDown Bridge** to its
+per-app whitelist/do-not-freeze list. An exemption that applies only while a
+notification is visible will no longer protect it after notifications are hidden.
 
 ## How it works
 
@@ -198,8 +205,14 @@ Please report vulnerabilities according to [SECURITY.md](SECURITY.md).
 1. Check the listener state in the bridge app; a startup failure now includes a reason.
 2. Open `http://127.0.0.1:17800/ping` from a browser on the same device.
 3. Re-copy the token from the app and test `/api/v1/info`.
-4. Disable battery optimization for FluxDown Bridge.
-5. Restart the service and test again.
+4. If the interface and authentication work but the extension is disconnected,
+   check its own background worker; disable and re-enable the extension if needed.
+5. If the interface does not respond, check background-freezer and battery rules,
+   then restart the service and test again.
+
+The listener state only confirms that the local interface started. A successful
+handoff means Android accepted the launch request, not that FluxDown created or
+completed a download. Recent activity is retained only in the current process.
 
 **The service starts but FluxDown does not open**
 
@@ -211,14 +224,22 @@ Please report vulnerabilities according to [SECURITY.md](SECURITY.md).
 
 **It works until the screen stays off for a while**
 
-Enable unrestricted battery use, keep the foreground notification visible, and
-check whether the ROM has a separate background-start or autostart permission.
+Check battery restrictions, autostart permissions, and background-freezer
+exclusions. Hiding a notification differs from pressing **Stop** in Android's
+Active apps panel, which stops the entire app.
 
-**I disabled notifications and it became less reliable**
+**Hide notifications while continuing to receive requests**
 
-Notifications are a choice. If intermittent disconnects appear after disabling
-app or channel notifications, temporarily restore the standard notification and
-compare. A correlation alone does not establish a change in process priority.
+Open **Manage notification visibility** and turn off app notifications. Android
+13+ can hide foreground-service notifications from the drawer while continuing
+to list the service in Active apps. Bridge does not stop its listener in response.
+
+Exclude Bridge from third-party freezing rules first. A frozen process may still
+be marked as a foreground service with an open port while being unable to answer
+requests. Distinguish notification permission, process freezing, and extension
+worker failures instead of assuming visible notifications are universally
+required. Validate channel-hiding behavior separately on other Android versions
+and ROMs.
 
 For request-level diagnostics that contain no URLs, cookies, tokens, or bodies:
 

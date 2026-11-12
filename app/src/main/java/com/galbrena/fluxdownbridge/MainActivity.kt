@@ -1,11 +1,9 @@
 package com.galbrena.fluxdownbridge
 
-import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.app.NotificationManager
 import android.graphics.Color as AndroidColor
 import android.os.Build
@@ -22,6 +20,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +37,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -48,17 +46,21 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Error
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,8 +74,8 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -88,11 +90,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +108,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,11 +119,6 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
         )
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 33)
-        }
         if (BridgePrefs.enabled(this)) BridgeService.start(this)
         setContent {
             FluxBridgeTheme {
@@ -192,14 +194,19 @@ private fun BridgeScreen() {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val serviceState by BridgeService.runtimeState.collectAsStateWithLifecycle()
+    val activity by BridgeActivityState.snapshot.collectAsStateWithLifecycle()
     var token by remember { mutableStateOf(BridgePrefs.token(context)) }
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
+    var connectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var resetTokenDialog by rememberSaveable { mutableStateOf(false) }
     var quietNotifications by remember { mutableStateOf(BridgePrefs.quietNotifications(context)) }
     var currentNotificationState by remember { mutableStateOf(notificationState(context)) }
     var rootState by remember { mutableStateOf(RootState.Idle) }
     var rootMessage by remember { mutableStateOf("") }
 
     LifecycleResumeEffect(serviceState) {
+        token = BridgePrefs.token(context)
+        quietNotifications = BridgePrefs.quietNotifications(context)
         currentNotificationState = notificationState(context)
         onPauseOrDispose {}
     }
@@ -214,24 +221,15 @@ private fun BridgeScreen() {
         label = "statusColor",
     )
 
-    fun copyToken() {
+    fun copyValue(label: String, value: String, message: String) {
         val clipboard = context.getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText("FluxDown Bridge Token", token))
-        scope.launch { snackbar.showSnackbar("令牌已复制") }
-    }
-
-    fun startService() {
-        BridgeService.start(context)
-    }
-
-    fun stopService() {
-        BridgeService.stop(context)
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        scope.launch { snackbar.showSnackbar(message) }
     }
 
     fun regenerateToken() {
         token = BridgeService.regenerateToken(context)
-        rootState = RootState.Idle
-        rootMessage = ""
+        tokenVisible = false
         scope.launch { snackbar.showSnackbar("已生成新令牌，请在扩展中同步修改") }
     }
 
@@ -286,22 +284,14 @@ private fun BridgeScreen() {
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Header(serviceState)
+                Header()
                 HeroCard(
                     state = serviceState,
                     statusColor = statusColor,
-                    onStart = ::startService,
-                    onStop = ::stopService,
+                    activity = activity,
+                    onStart = { BridgeService.start(context) },
+                    onStop = { BridgeService.stop(context) },
                 )
-                SectionLabel("扩展连接")
-                TokenCard(
-                    token = token,
-                    visible = tokenVisible,
-                    onToggleVisible = { tokenVisible = !tokenVisible },
-                    onCopy = ::copyToken,
-                    onRegenerate = ::regenerateToken,
-                )
-                SectionLabel("应用设置")
                 RootCard(
                     state = rootState,
                     message = rootMessage,
@@ -315,30 +305,29 @@ private fun BridgeScreen() {
                         BridgePrefs.setQuietNotifications(context, it)
                         BridgeService.refreshNotification(context)
                         currentNotificationState = notificationState(context)
-                        scope.launch {
-                            snackbar.showSnackbar(if (it) "已切换为静默通知" else "已恢复标准通知")
-                        }
                     },
                     onOpenSettings = {
-                        val state = notificationState(context)
-                        val appIntent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        val settingsIntent = if (!state.appEnabled || !state.channelCreated) {
-                            appIntent
-                        } else {
-                            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        context.startActivity(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                                 .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                .putExtra(Settings.EXTRA_CHANNEL_ID, BridgeService.notificationChannelId(context))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        runCatching { context.startActivity(settingsIntent) }.onFailure {
-                            context.startActivity(appIntent)
-                        }
+                        )
                     },
                 )
-                SectionLabel("首次设置")
-                SetupCard()
+                ConnectionCard(
+                    expanded = connectionExpanded,
+                    onToggleExpanded = {
+                        connectionExpanded = !connectionExpanded
+                        if (!connectionExpanded) tokenVisible = false
+                    },
+                    token = token,
+                    visible = tokenVisible,
+                    onToggleVisible = { tokenVisible = !tokenVisible },
+                    onCopyAddress = {
+                        copyValue("FluxDown Bridge URL", "http://127.0.0.1:17800", "地址已复制")
+                    },
+                    onCopyToken = { copyValue("FluxDown Bridge Token", token, "令牌已复制") },
+                    onRegenerate = { resetTokenDialog = true },
+                )
                 Text(
                     "本地回环专用 · 不监听局域网 · 无轮询 · 无持续唤醒锁",
                     style = MaterialTheme.typography.labelSmall,
@@ -350,6 +339,23 @@ private fun BridgeScreen() {
                 )
             }
         }
+    }
+
+    if (resetTokenDialog) {
+        AlertDialog(
+            onDismissRequest = { resetTokenDialog = false },
+            title = { Text("重置访问令牌？") },
+            text = { Text("现有令牌会立即失效，扩展将无法继续投递。重置后需要把新令牌重新粘贴到扩展中。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    resetTokenDialog = false
+                    regenerateToken()
+                }) { Text("重置令牌") }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetTokenDialog = false }) { Text("取消") }
+            },
+        )
     }
 }
 
@@ -367,103 +373,46 @@ private fun NotificationCard(
     ) {
         Column(
             Modifier.padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("服务通知", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "标准通知、静默或按系统设置关闭",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedButton(
-                    onClick = onOpenSettings,
-                ) {
-                    Text("系统设置")
-                }
-            }
-            Surface(
-                shape = MaterialTheme.shapes.large,
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            Text("通知显示", style = MaterialTheme.typography.titleLarge)
+            Text(
+                when {
+                    notificationState.blocked -> "已在系统中隐藏，服务仍可运行"
+                    !notificationState.channelCreated -> "启动服务后可设置通知显示"
+                    else -> "系统允许显示通知"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (notificationState.appEnabled && notificationState.channelCreated) {
                 Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .semantics(mergeDescendants = true) {}
-                        .toggleable(value = quiet, role = Role.Switch, onValueChange = onQuietChange)
-                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("静默通知", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "降低通知渠道优先级，不改变桥接服务运行",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = quiet, onCheckedChange = null)
+                    Text("通知样式", style = MaterialTheme.typography.labelLarge)
+                    FilterChip(
+                        selected = !quiet,
+                        onClick = { if (quiet) onQuietChange(false) },
+                        label = { Text("标准") },
+                    )
+                    FilterChip(
+                        selected = quiet,
+                        onClick = { if (!quiet) onQuietChange(true) },
+                        label = { Text("静默") },
+                    )
                 }
-            }
-            if (notificationState.blocked) {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Icon(
-                            Icons.Rounded.Security,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(
-                                "通知当前已关闭",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            )
-                            Text(
-                                "通知可以按需关闭。若出现间歇断连，可能与通知设置有关，可以恢复通知作对比排查。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            )
-                        }
-                    }
-                }
-            } else if (!notificationState.channelCreated) {
                 Text(
-                    "启动服务后创建通知渠道。",
+                    "当前渠道：${notificationImportanceLabel(notificationState.channelImportance)}，以系统设置为准",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            } else if (quiet) {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        "正在使用最低优先级通知。若出现间歇断连，可以试着恢复标准通知作对比。",
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
+            }
+            OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
+                Text("管理通知显示")
             }
             Text(
-                "Android 要求前台服务声明一条通知。你仍可在系统设置中选择是否显示；若遇到不稳定，可以恢复应用通知或标准通知渠道作对比。",
+                "使用后台冻结工具时，请将 Bridge 加入不冻结名单。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -471,88 +420,48 @@ private fun NotificationCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun notificationImportanceLabel(importance: Int?): String = when (importance) {
+    NotificationManager.IMPORTANCE_NONE -> "已关闭"
+    NotificationManager.IMPORTANCE_MIN -> "最低重要性"
+    NotificationManager.IMPORTANCE_LOW -> "低重要性"
+    NotificationManager.IMPORTANCE_DEFAULT -> "默认重要性"
+    NotificationManager.IMPORTANCE_HIGH, NotificationManager.IMPORTANCE_MAX -> "高重要性"
+    else -> "由系统管理"
+}
+
 @Composable
-private fun Header(state: BridgeRuntimeState) {
-    val containerColor = when (state) {
-        BridgeRuntimeState.Running, BridgeRuntimeState.Starting -> MaterialTheme.colorScheme.primaryContainer
-        is BridgeRuntimeState.Failed -> MaterialTheme.colorScheme.errorContainer
-        BridgeRuntimeState.Stopped -> MaterialTheme.colorScheme.surfaceContainerHighest
-    }
-    val contentColor = when (state) {
-        BridgeRuntimeState.Running, BridgeRuntimeState.Starting -> MaterialTheme.colorScheme.onPrimaryContainer
-        is BridgeRuntimeState.Failed -> MaterialTheme.colorScheme.onErrorContainer
-        BridgeRuntimeState.Stopped -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    "FluxDown",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.width(7.dp))
-                Text(
-                    "Bridge",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
-            }
+private fun Header() {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                "手机内的无缝下载桥",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "FluxDown",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                "Bridge",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                modifier = Modifier.padding(bottom = 2.dp),
             )
         }
-        Surface(
-            shape = CircleShape,
-            color = containerColor,
-            contentColor = contentColor,
-        ) {
-            Row(
-                Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                if (state == BridgeRuntimeState.Starting) {
-                    LoadingIndicator(modifier = Modifier.size(18.dp), color = contentColor)
-                } else {
-                    Icon(
-                        when (state) {
-                            BridgeRuntimeState.Running -> Icons.Rounded.CheckCircle
-                            is BridgeRuntimeState.Failed -> Icons.Rounded.Error
-                            else -> Icons.Rounded.Stop
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                Text(
-                    when (state) {
-                        BridgeRuntimeState.Starting -> "启动中"
-                        BridgeRuntimeState.Running -> "运行中"
-                        BridgeRuntimeState.Stopped -> "已停止"
-                        is BridgeRuntimeState.Failed -> "启动失败"
-                    },
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-        }
+        Text(
+            "手机内的无缝下载桥",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun HeroCard(
     state: BridgeRuntimeState,
     statusColor: Color,
+    activity: BridgeActivitySnapshot,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -580,33 +489,51 @@ private fun HeroCard(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(13.dp),
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                    ) {
-                        Icon(
-                            Icons.Rounded.Download,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.padding(12.dp).size(27.dp),
-                        )
+                    Surface(shape = RoundedCornerShape(18.dp), color = statusColor) {
+                        if (state == BridgeRuntimeState.Starting) {
+                            LoadingIndicator(
+                                modifier = Modifier.padding(12.dp).size(27.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        } else {
+                            Icon(
+                                when (state) {
+                                    is BridgeRuntimeState.Failed -> Icons.Rounded.Error
+                                    BridgeRuntimeState.Stopped -> Icons.Rounded.Stop
+                                    else -> Icons.Rounded.Download
+                                },
+                                contentDescription = null,
+                                tint = if (state is BridgeRuntimeState.Failed) {
+                                    MaterialTheme.colorScheme.onError
+                                } else if (state == BridgeRuntimeState.Stopped) {
+                                    MaterialTheme.colorScheme.surface
+                                } else {
+                                    MaterialTheme.colorScheme.onPrimary
+                                },
+                                modifier = Modifier.padding(12.dp).size(27.dp),
+                            )
+                        }
                     }
                     Column(Modifier.weight(1f)) {
                         Text(
                             when (state) {
-                                BridgeRuntimeState.Starting -> "正在启动桥接服务"
-                                BridgeRuntimeState.Running -> "桥接服务正在监听"
-                                BridgeRuntimeState.Stopped -> "桥接服务未运行"
-                                is BridgeRuntimeState.Failed -> "桥接服务启动失败"
+                                BridgeRuntimeState.Starting -> "正在开启本地接口"
+                                BridgeRuntimeState.Running -> "本地接口已开启"
+                                BridgeRuntimeState.Stopped -> "本地接口已停止"
+                                is BridgeRuntimeState.Failed -> "本地接口启动失败"
                             },
                             style = MaterialTheme.typography.titleLarge,
                         )
                         Text(
-                            "127.0.0.1:17800",
+                            when (state) {
+                                is BridgeRuntimeState.Failed -> state.message
+                                BridgeRuntimeState.Stopped -> "启动后可接收浏览器请求"
+                                else -> "仅在这台手机上接收请求"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.76f),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                     }
                 }
@@ -615,50 +542,42 @@ private fun HeroCard(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.66f),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(
+                    Column(
                         Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Box(
-                            Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(statusColor)
+                        ActivityLine(
+                            "最近接口请求",
+                            activity.lastRequestAtMillis?.let(::formatActivityTime) ?: "尚未收到请求",
                         )
-                        Spacer(Modifier.width(9.dp))
-                        Text(
-                            when (state) {
-                                BridgeRuntimeState.Starting -> "正在建立本地监听"
-                                BridgeRuntimeState.Running -> "扩展可以直接投递下载"
-                                BridgeRuntimeState.Stopped -> "启动后扩展才能连接"
-                                is BridgeRuntimeState.Failed -> state.message
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
+                        ActivityLine(
+                            "最近交接结果",
+                            activity.lastResult?.let { "${formatActivityTime(it.atMillis)} · ${dispatchResultLabel(it)}" }
+                                ?: "暂无交接记录",
                         )
                     }
                 }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    FilledTonalButton(
-                        onClick = onStart,
-                        enabled = !state.active,
-                        modifier = Modifier.weight(1f),
-                    ) {
+                when (state) {
+                    BridgeRuntimeState.Stopped -> Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
                         Text("启动")
                     }
-                    Button(
-                        onClick = onStop,
-                        enabled = state != BridgeRuntimeState.Stopped,
-                        modifier = Modifier.weight(1f),
+                    is BridgeRuntimeState.Failed -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Button(onClick = onStart, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("重试")
+                        }
+                        TextButton(onClick = onStop) { Text("停止") }
+                    }
+                    else -> OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Rounded.Stop, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
-                        Text("停止")
+                        Text(if (state == BridgeRuntimeState.Starting) "取消启动" else "停止")
                     }
                 }
             }
@@ -667,11 +586,36 @@ private fun HeroCard(
 }
 
 @Composable
-private fun TokenCard(
+private fun ActivityLine(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+private fun formatActivityTime(atMillis: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(atMillis))
+
+private fun dispatchResultLabel(result: BridgeDispatchResult): String = when (result.outcome) {
+    BridgeDispatchOutcome.SENT -> "已交给 FluxDown · ${result.sent} 项"
+    BridgeDispatchOutcome.AUTH_FAILED -> "令牌校验失败，请检查扩展配置"
+    BridgeDispatchOutcome.INVALID_REQUEST -> "请求无效，未完成交接"
+    BridgeDispatchOutcome.LAUNCH_FAILED -> if (result.sent > 0) {
+        "已交接 ${result.sent}/${result.total} 项，其余交接失败"
+    } else {
+        "交接失败，请检查 Root 和 FluxDown"
+    }
+}
+
+@Composable
+private fun ConnectionCard(
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
     token: String,
     visible: Boolean,
     onToggleVisible: () -> Unit,
-    onCopy: () -> Unit,
+    onCopyAddress: () -> Unit,
+    onCopyToken: () -> Unit,
     onRegenerate: () -> Unit,
 ) {
     Card(
@@ -679,66 +623,77 @@ private fun TokenCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(
-            Modifier.padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClick = onToggleExpanded)
+                .semantics { stateDescription = if (expanded) "已展开" else "已折叠" }
+                .padding(22.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column {
-                    Text("访问令牌", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "扩展远程服务器使用",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(onClick = onToggleVisible) {
-                    Icon(
-                        if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                        contentDescription = if (visible) "隐藏令牌" else "显示令牌",
-                    )
-                }
+            Column(Modifier.weight(1f)) {
+                Text("连接配置", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "地址、访问令牌与首次设置",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Surface(
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                modifier = Modifier.fillMaxWidth(),
+            Icon(
+                if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = null,
+            )
+        }
+        if (expanded) {
+            Column(
+                Modifier.padding(start = 22.dp, end = 22.dp, bottom = 22.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("服务器地址", style = MaterialTheme.typography.titleMedium)
                 SelectionContainer {
-                    Text(
-                        if (visible) token else token.maskToken(),
-                        modifier = Modifier.padding(16.dp),
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Text("http://127.0.0.1:17800", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
                 }
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                FilledTonalButton(
-                    onClick = onCopy,
-                    modifier = Modifier.weight(1f),
-                ) {
+                OutlinedButton(onClick = onCopyAddress, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Rounded.ContentCopy, contentDescription = null)
                     Spacer(Modifier.width(7.dp))
-                    Text("复制")
+                    Text("复制地址")
                 }
-                OutlinedButton(
-                    onClick = onRegenerate,
-                    modifier = Modifier.weight(1f),
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("访问令牌", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onToggleVisible) {
+                        Icon(
+                            if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = if (visible) "隐藏令牌" else "显示令牌",
+                        )
+                    }
+                }
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(7.dp))
-                    Text("重新生成")
+                    SelectionContainer {
+                        Text(
+                            if (visible) token else token.maskToken(),
+                            modifier = Modifier.padding(16.dp),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
+                FilledTonalButton(onClick = onCopyToken, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.ContentCopy, contentDescription = null)
+                    Spacer(Modifier.width(7.dp))
+                    Text("复制令牌")
+                }
+                TextButton(onClick = onRegenerate, modifier = Modifier.align(Alignment.End)) {
+                    Text("重置访问令牌")
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SetupInstructions()
             }
         }
     }
@@ -823,48 +778,18 @@ private fun RootCard(state: RootState, message: String, onTest: () -> Unit) {
 }
 
 @Composable
-private fun SetupCard() {
-    Card(
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            Modifier.padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("连接浏览器扩展", style = MaterialTheme.typography.titleLarge)
-            Step(1, "打开 FluxDown 扩展的“远程服务器”设置")
-            Step(2, "地址填写 http://127.0.0.1:17800")
-            Step(3, "粘贴上方令牌并测试连接")
-            Step(4, "投递模式选择“仅远程 / Always”")
-            Step(5, "关闭“FluxDown 自定义协议”")
-            Text(
-                "首次接管下载时，请允许 KernelSU/Magisk 永久 Root。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+private fun SetupInstructions() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("连接浏览器扩展", style = MaterialTheme.typography.titleMedium)
+        Step(1, "打开 FluxDown 扩展的“远程服务器”设置")
+        Step(2, "粘贴服务器地址")
+        Step(3, "粘贴令牌并测试连接")
+        Step(4, "投递模式选择“仅远程 / Always”")
+        Step(5, "关闭“FluxDown 自定义协议”")
         Text(
-            text,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        HorizontalDivider(
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.outlineVariant,
+            "首次接管下载时，请允许 KernelSU/Magisk 永久 Root。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

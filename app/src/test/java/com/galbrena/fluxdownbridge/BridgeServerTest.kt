@@ -3,6 +3,7 @@ package com.galbrena.fluxdownbridge
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
@@ -16,7 +17,22 @@ class BridgeServerTest {
         else RootLauncher.Result(0, "OK")
     }.also { it.start(0) }
 
-    @After fun close() = server.stop()
+    @Before fun resetActivity() = BridgeActivityState.reset()
+
+    @After fun close() {
+        server.stop()
+        BridgeActivityState.reset()
+    }
+
+    private fun assertLatestResult(outcome: BridgeDispatchOutcome, sent: Int, total: Int) {
+        val snapshot = BridgeActivityState.snapshot.value
+        assertNotNull(snapshot.lastRequestAtMillis)
+        val result = snapshot.lastResult ?: error("Missing dispatch result")
+        assertEquals(outcome, result.outcome)
+        assertEquals(sent, result.sent)
+        assertEquals(total, result.total)
+        assertTrue(result.atMillis >= snapshot.lastRequestAtMillis!!)
+    }
 
     private fun request(path: String, token: String? = null, body: String? = null): Pair<Int, JSONObject> {
         Socket("127.0.0.1", server.localPort).use { socket ->
@@ -52,6 +68,7 @@ class BridgeServerTest {
         assertEquals(200, request("/download", "old-token", body).first)
         val parsed = java.net.URLDecoder.decode(launches.single(), "UTF-8")
         assertTrue(parsed.contains("filename=$filename"))
+        assertLatestResult(BridgeDispatchOutcome.SENT, 1, 1)
     }
 
     @Test fun invalidLaterItemDoesNotLaunchEarlierItems() {
@@ -61,6 +78,7 @@ class BridgeServerTest {
         assertEquals(0, json.getInt("sent"))
         assertEquals(2, json.getInt("failedIndex"))
         assertTrue(launches.isEmpty())
+        assertLatestResult(BridgeDispatchOutcome.INVALID_REQUEST, 0, 2)
     }
 
     @Test fun partialLaunchFailureReportsProgressAndStopsRemainingItems() {
@@ -73,6 +91,7 @@ class BridgeServerTest {
         assertEquals(3, json.getInt("total"))
         assertEquals(2, json.getInt("failedIndex"))
         assertEquals(2, launches.size)
+        assertLatestResult(BridgeDispatchOutcome.LAUNCH_FAILED, 1, 3)
     }
 
     @Test fun batchSuccessReportsAllSent() {
@@ -82,6 +101,7 @@ class BridgeServerTest {
         assertEquals(2, json.getInt("sent"))
         assertTrue(json.getBoolean("success"))
         assertEquals(2, launches.size)
+        assertLatestResult(BridgeDispatchOutcome.SENT, 2, 2)
     }
 
     @Test fun idlePreconnectionsDoNotBlockPing() {
@@ -93,5 +113,25 @@ class BridgeServerTest {
     @Test fun unauthenticatedDownloadDoesNotLaunch() {
         assertEquals(401, request("/download", body = """{"url":"https://example.test/one"}""").first)
         assertTrue(launches.isEmpty())
+        assertLatestResult(BridgeDispatchOutcome.AUTH_FAILED, 0, 1)
+    }
+
+    @Test fun pingRecordsRequestWithoutInventingOrReplacingHandoff() {
+        assertEquals(200, request("/ping").first)
+        assertNotNull(BridgeActivityState.snapshot.value.lastRequestAtMillis)
+        assertNull(BridgeActivityState.snapshot.value.lastResult)
+        assertEquals(200, request("/download", "old-token", """{"url":"https://example.test/one"}""").first)
+        val handoff = BridgeActivityState.snapshot.value.lastResult
+        assertEquals(200, request("/ping").first)
+        assertEquals(handoff, BridgeActivityState.snapshot.value.lastResult)
+    }
+
+    @Test fun singleRequestDistinguishesInvalidInputFromLaunchFailure() {
+        assertEquals(400, request("/download", "old-token", """{"url":"file:///invalid"}""").first)
+        assertLatestResult(BridgeDispatchOutcome.INVALID_REQUEST, 0, 1)
+        assertTrue(launches.isEmpty())
+        failLaunch = 1
+        assertEquals(400, request("/download", "old-token", """{"url":"https://example.test/one"}""").first)
+        assertLatestResult(BridgeDispatchOutcome.LAUNCH_FAILED, 0, 1)
     }
 }

@@ -74,6 +74,16 @@ download remains FluxDown's responsibility.
    stored enabled preference represents user intent, not proof of a live port.
 8. The service observes access-token preference changes and updates the existing
    server in place. No UI timer or service restart is involved.
+9. A second process-local StateFlow stores only the latest request time and
+   handoff outcome/counts. It contains no request content and resets with the
+   process; the UI updates on events, without a periodic refresh loop.
+
+Android still receives the notification required by `startForeground`. On
+Android 13+, denying notification permission hides it from the notification
+drawer while foreground-service notices remain in Active apps. Opening Bridge
+does not request that permission again. A third-party freezer can still suspend
+the process, including when it exempts only apps with visible notifications;
+Bridge must be excluded from that freezing policy for continuous reception.
 
 The service never binds to `0.0.0.0` and has no LAN discovery mechanism.
 

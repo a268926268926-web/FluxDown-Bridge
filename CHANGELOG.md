@@ -2,6 +2,28 @@
 
 All notable changes are documented here.
 
+## [1.8.0] - 2026-11-12
+
+### Changed
+
+- Stop requesting notification permission automatically when the app opens.
+  Notification visibility remains controlled by Android's app notification settings.
+- Distinguish notification visibility from channel style and report the actual
+  channel importance chosen in system settings.
+- Simplify the home screen, collapse connection setup, and confirm token resets
+  before invalidating existing extension credentials.
+- Show the latest interface request and handoff result from in-memory events,
+  without polling or retaining URLs, tokens, cookies, or request bodies.
+- Clarify that a running listener does not establish extension health, and that
+  a successful handoff does not confirm creation or completion of a download.
+- Document background-freezer exclusions for notification-hidden operation.
+  The Android foreground service and existing HTTP contract are retained.
+
+### Tests
+
+- Add regression coverage for request activity and handoff-result classification,
+  including authentication failures, invalid requests, and partial batch handoffs.
+
 ## [1.7.0] - 2026-10-25
 
 ### Changed

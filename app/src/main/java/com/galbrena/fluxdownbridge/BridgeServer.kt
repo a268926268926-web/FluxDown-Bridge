@@ -116,6 +116,7 @@ internal class BridgeServer(
                 method = request.method
                 path = request.path
                 requestParsed = true
+                if (method != "OPTIONS") BridgeActivityState.requestReceived()
                 val response = when {
                     request.method == "OPTIONS" -> HttpResponse(204, "{}")
                     request.method == "GET" && path == "/ping" -> {
@@ -173,20 +174,35 @@ internal class BridgeServer(
     }
 
     private fun handleOne(request: HttpRequest): HttpResponse {
-        if (!authorized(request)) return HttpResponse(401, error("remote_auth_failed"))
+        if (!authorized(request)) {
+            BridgeActivityState.dispatchFinished(BridgeDispatchOutcome.AUTH_FAILED, total = 1)
+            return HttpResponse(401, error("remote_auth_failed"))
+        }
+        var validated = false
         return try {
-            launchProtocol(buildProtocolUri(JSONObject(request.body)))
+            val protocol = buildProtocolUri(JSONObject(request.body))
+            validated = true
+            launchProtocol(protocol)
+            BridgeActivityState.dispatchFinished(BridgeDispatchOutcome.SENT, sent = 1, total = 1)
             ok("sent to FluxDown")
         } catch (error: Exception) {
+            BridgeActivityState.dispatchFinished(
+                if (validated) BridgeDispatchOutcome.LAUNCH_FAILED else BridgeDispatchOutcome.INVALID_REQUEST,
+                total = 1,
+            )
             HttpResponse(400, error(error.message))
         }
     }
 
     private fun handleBatch(request: HttpRequest): HttpResponse {
-        if (!authorized(request)) return HttpResponse(401, error("remote_auth_failed"))
+        if (!authorized(request)) {
+            BridgeActivityState.dispatchFinished(BridgeDispatchOutcome.AUTH_FAILED)
+            return HttpResponse(401, error("remote_auth_failed"))
+        }
         var total = 0
         var sent = 0
         var itemIndex = 0
+        var validated = false
         return try {
             val items: JSONArray = JSONObject(request.body).optJSONArray("items")
                 ?: throw IllegalArgumentException("items array required")
@@ -199,6 +215,7 @@ internal class BridgeServer(
                     ?: throw IllegalArgumentException("item $itemIndex is not an object")
                 buildProtocolUri(item)
             }
+            validated = true
             protocols.forEachIndexed { index, protocol ->
                 itemIndex = index + 1
                 launchProtocol(protocol)
@@ -207,6 +224,7 @@ internal class BridgeServer(
                 // Keep this interval until upstream exposes an acknowledged batch intake.
                 if (sent < total) Thread.sleep(250)
             }
+            BridgeActivityState.dispatchFinished(BridgeDispatchOutcome.SENT, sent, total)
             HttpResponse(200, JSONObject()
                 .put("success", true)
                 .put("message", "$sent item(s) sent to FluxDown")
@@ -214,6 +232,11 @@ internal class BridgeServer(
                 .put("total", total)
                 .toString())
         } catch (failure: Exception) {
+            BridgeActivityState.dispatchFinished(
+                if (validated) BridgeDispatchOutcome.LAUNCH_FAILED else BridgeDispatchOutcome.INVALID_REQUEST,
+                sent,
+                total,
+            )
             HttpResponse(400, JSONObject()
                 .put("success", false)
                 .put("message", "$sent/$total item(s) sent; item $itemIndex failed: ${failure.message}")
